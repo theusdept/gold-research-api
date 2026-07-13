@@ -2,6 +2,7 @@ import os
 import re
 from datetime import datetime
 from typing import Optional
+from decimal import Decimal
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, EmailStr, field_validator
 import psycopg2
@@ -99,6 +100,7 @@ async def init_db():
                 city VARCHAR(100),
                 state VARCHAR(2),
                 zip_code VARCHAR(10),
+                purchase_amount NUMERIC(12, 2),
                 transaction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -113,6 +115,9 @@ async def init_db():
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_transaction_date ON gold_purchases(transaction_date);
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_purchase_amount ON gold_purchases(purchase_amount);
         """)
         
         conn.commit()
@@ -135,6 +140,7 @@ class BuyerRecord(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     zip_code: Optional[str] = None
+    purchase_amount: Optional[float] = None
     transaction_date: Optional[datetime] = None
     
     @field_validator('customer_name')
@@ -150,6 +156,13 @@ class BuyerRecord(BaseModel):
         if v and len(v) != 2:
             raise ValueError('state must be a 2-character code')
         return v.upper() if v else None
+    
+    @field_validator('purchase_amount')
+    @classmethod
+    def validate_purchase_amount(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('purchase_amount must be a positive number')
+        return v
 
 
 class BuyerResponse(BaseModel):
@@ -161,6 +174,7 @@ class BuyerResponse(BaseModel):
     city: Optional[str] = None
     state: Optional[str] = None
     zip_code: Optional[str] = None
+    purchase_amount: Optional[float] = None
     transaction_date: datetime
 
 
@@ -169,7 +183,9 @@ async def get_buyers(
     state: Optional[str] = Query(None, min_length=2, max_length=2),
     zip_code: Optional[str] = Query(None),
     start_date: Optional[datetime] = Query(None),
-    end_date: Optional[datetime] = Query(None)
+    end_date: Optional[datetime] = Query(None),
+    min_amount: Optional[float] = Query(None, ge=0),
+    max_amount: Optional[float] = Query(None, ge=0)
 ):
     """
     Retrieve all gold purchase records with optional filters.
@@ -179,6 +195,8 @@ async def get_buyers(
     - zip_code: Filter by zip code
     - start_date: Filter by transaction start date (ISO 8601 format)
     - end_date: Filter by transaction end date (ISO 8601 format)
+    - min_amount: Filter by minimum purchase amount (USD)
+    - max_amount: Filter by maximum purchase amount (USD)
     """
     conn = None
     try:
@@ -203,6 +221,14 @@ async def get_buyers(
         if end_date:
             query += " AND transaction_date <= %s"
             params.append(end_date)
+        
+        if min_amount is not None:
+            query += " AND purchase_amount >= %s"
+            params.append(min_amount)
+        
+        if max_amount is not None:
+            query += " AND purchase_amount <= %s"
+            params.append(max_amount)
         
         query += " ORDER BY transaction_date DESC"
         
@@ -235,8 +261,8 @@ async def create_buyer(record: BuyerRecord):
         
         cursor.execute("""
             INSERT INTO gold_purchases
-            (customer_name, email_address, phone_number, city, state, zip_code, transaction_date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (customer_name, email_address, phone_number, city, state, zip_code, purchase_amount, transaction_date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING *;
         """, (
             data['customer_name'],
@@ -245,6 +271,7 @@ async def create_buyer(record: BuyerRecord):
             data['city'],
             data['state'],
             data['zip_code'],
+            data['purchase_amount'],
             data['transaction_date'] or datetime.now()
         ))
         
@@ -259,6 +286,58 @@ async def create_buyer(record: BuyerRecord):
             conn.rollback()
         logger.error(f"Error creating buyer: {e}")
         raise HTTPException(status_code=500, detail="Failed to create record")
+    
+    finally:
+        if conn:
+            return_connection(conn)
+
+
+@app.get("/api/v1/research/buyers/analytics/total", response_model=dict)
+async def get_total_purchase_amount(
+    state: Optional[str] = Query(None, min_length=2, max_length=2),
+    start_date: Optional[datetime] = Query(None),
+    end_date: Optional[datetime] = Query(None)
+):
+    """
+    Get total purchase amount for gold transactions.
+    
+    Query Parameters:
+    - state: Filter by 2-letter state code
+    - start_date: Filter by transaction start date (ISO 8601 format)
+    - end_date: Filter by transaction end date (ISO 8601 format)
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = "SELECT SUM(purchase_amount) as total_amount, COUNT(*) as transaction_count FROM gold_purchases WHERE 1=1"
+        params = []
+        
+        if state:
+            query += " AND UPPER(state) = UPPER(%s)"
+            params.append(state)
+        
+        if start_date:
+            query += " AND transaction_date >= %s"
+            params.append(start_date)
+        
+        if end_date:
+            query += " AND transaction_date <= %s"
+            params.append(end_date)
+        
+        cursor.execute(query, params)
+        result = cursor.fetchone()
+        
+        return {
+            "total_amount": float(result['total_amount']) if result['total_amount'] else 0.0,
+            "transaction_count": result['transaction_count'],
+            "average_amount": float(result['total_amount'] / result['transaction_count']) if result['transaction_count'] and result['total_amount'] else 0.0
+        }
+    
+    except Exception as e:
+        logger.error(f"Error calculating totals: {e}")
+        raise HTTPException(status_code=500, detail="Failed to calculate analytics")
     
     finally:
         if conn:
