@@ -85,12 +85,13 @@ async def shutdown():
 
 
 async def init_db():
-    """Create the gold_purchases table if it doesn't exist."""
+    """Create the gold_purchases table if it doesn't exist and add missing columns."""
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
         
+        # Create table if it doesn't exist
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS gold_purchases (
                 id SERIAL PRIMARY KEY,
@@ -106,7 +107,13 @@ async def init_db():
             );
         """)
         
-        # Create index on state and zip_code for faster filtering
+        # Add purchase_amount column if it doesn't exist
+        cursor.execute("""
+            ALTER TABLE gold_purchases 
+            ADD COLUMN IF NOT EXISTS purchase_amount NUMERIC(12, 2);
+        """)
+        
+        # Create indexes (IF NOT EXISTS prevents errors if they already exist)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_state ON gold_purchases(state);
         """)
