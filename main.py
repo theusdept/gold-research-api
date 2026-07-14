@@ -13,6 +13,7 @@ import asyncio
 
 from visa_idx_client import get_visa_idx_client
 from visa_idx_sync import get_sync_pipeline
+from merchant_enrichment import get_enrichment_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ DB_NAME = os.getenv("PGDATABASE", "gold_research")
 # Connection pool
 connection_pool = None
 sync_pipeline = None
+enrichment_service = None
 
 
 def init_connection_pool():
@@ -76,8 +78,8 @@ def strip_sensitive_data(data: dict) -> dict:
 
 @app.on_event("startup")
 async def startup():
-    """Initialize database and Visa IDX sync pipeline on startup."""
-    global sync_pipeline
+    """Initialize database and integrations on startup."""
+    global sync_pipeline, enrichment_service
     
     init_connection_pool()
     await init_db()
@@ -106,6 +108,27 @@ async def startup():
     
     except Exception as e:
         logger.warning(f"Failed to initialize Visa IDX integration: {e}. Continuing without sync.")
+    
+    # Initialize Merchant Enrichment service
+    try:
+        db_params = {
+            "host": DB_HOST,
+            "port": DB_PORT,
+            "user": DB_USER,
+            "password": DB_PASSWORD,
+            "database": DB_NAME
+        }
+        enrichment_service = get_enrichment_service(db_params)
+        
+        # Initialize merchant tables
+        conn = get_connection()
+        await enrichment_service.init_merchant_tables(conn)
+        return_connection(conn)
+        
+        logger.info("Merchant enrichment service initialized")
+    
+    except Exception as e:
+        logger.warning(f"Failed to initialize merchant enrichment: {e}. Continuing without enrichment.")
 
 
 @app.on_event("shutdown")
@@ -429,12 +452,165 @@ async def get_total_purchase_amount(
             return_connection(conn)
 
 
+# Merchant Search Endpoints
+@app.post("/api/v1/merchants/enrich/transaction-search")
+async def enrich_with_transaction_search(
+    purchase_id: int = Query(..., description="ID of purchase record to enrich"),
+    raw_statement: str = Query(..., description="Raw transaction statement to clean"),
+    merchant_city: Optional[str] = Query(None),
+    merchant_state: Optional[str] = Query(None)
+):
+    """
+    Enrich a purchase record by cleaning raw transaction statement.
+    
+    Transforms messy statement strings (e.g., "AMZN MKTPLACE PMTS...") 
+    into clean merchant profiles using Visa Merchant Search.
+    """
+    if not enrichment_service:
+        raise HTTPException(status_code=503, detail="Merchant enrichment service not available")
+    
+    try:
+        result = await enrichment_service.enrich_purchase_with_transaction_search(
+            purchase_id=purchase_id,
+            raw_statement=raw_statement,
+            city=merchant_city,
+            state=merchant_state
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Enrichment failed"))
+        
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error enriching purchase: {e}")
+        raise HTTPException(status_code=500, detail="Enrichment failed")
+
+
+@app.post("/api/v1/merchants/enrich/directory-search")
+async def enrich_with_directory_search(
+    purchase_id: int = Query(..., description="ID of purchase record to enrich"),
+    merchant_name: str = Query(..., description="Merchant name to search"),
+    merchant_city: Optional[str] = Query(None),
+    merchant_state: Optional[str] = Query(None)
+):
+    """
+    Enrich a purchase record with merchant directory search.
+    
+    Returns comprehensive merchant profiles with:
+    - Confidence/match scores
+    - Category information
+    - Digital assets (logos, icons)
+    - Multiple matching merchants
+    """
+    if not enrichment_service:
+        raise HTTPException(status_code=503, detail="Merchant enrichment service not available")
+    
+    try:
+        result = await enrichment_service.enrich_purchase_with_directory_search(
+            purchase_id=purchase_id,
+            merchant_name=merchant_name,
+            city=merchant_city,
+            state=merchant_state
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Search failed"))
+        
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error searching merchant directory: {e}")
+        raise HTTPException(status_code=500, detail="Directory search failed")
+
+
+@app.post("/api/v1/merchants/nearby-locations")
+async def find_nearby_merchants(
+    city: str = Query(..., description="Search location city"),
+    state: str = Query(..., description="Search location state"),
+    distance_miles: Optional[float] = Query(None, description="Search radius in miles")
+):
+    """
+    Find nearby Visa-accepting merchants by location.
+    
+    Enables "near me" features for merchant discovery and research.
+    """
+    if not enrichment_service:
+        raise HTTPException(status_code=503, detail="Merchant enrichment service not available")
+    
+    try:
+        result = await enrichment_service.find_nearby_merchants_for_research(
+            city=city,
+            state=state,
+            distance_miles=distance_miles
+        )
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Location search failed"))
+        
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error finding nearby merchants: {e}")
+        raise HTTPException(status_code=500, detail="Location search failed")
+
+
+@app.get("/api/v1/merchants/merchant-profiles/{purchase_id}")
+async def get_purchase_merchant_profiles(purchase_id: int):
+    """
+    Get all merchant profiles enriched for a purchase record.
+    
+    Returns all merchants found through enrichment searches,
+    ranked by confidence score.
+    """
+    if not enrichment_service:
+        raise HTTPException(status_code=503, detail="Merchant enrichment service not available")
+    
+    try:
+        merchants = await enrichment_service.get_purchase_merchants(purchase_id)
+        return merchants
+    
+    except Exception as e:
+        logger.error(f"Error retrieving merchant profiles: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve profiles")
+
+
+@app.get("/api/v1/merchants/enrichment-status/{purchase_id}")
+async def get_enrichment_status(purchase_id: int):
+    """
+    Get enrichment status for a purchase record.
+    
+    Returns summary of all enrichment searches performed:
+    - Total searches executed
+    - Success/failure counts
+    - Merchant profiles found
+    - Last enrichment timestamp
+    """
+    if not enrichment_service:
+        raise HTTPException(status_code=503, detail="Merchant enrichment service not available")
+    
+    try:
+        status = await enrichment_service.get_enrichment_status(purchase_id)
+        return status
+    
+    except Exception as e:
+        logger.error(f"Error getting enrichment status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get status")
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "visa_idx_integration": "enabled" if sync_pipeline else "disabled"
+        "visa_idx_integration": "enabled" if sync_pipeline else "disabled",
+        "merchant_enrichment": "enabled" if enrichment_service else "disabled"
     }
 
 
@@ -467,6 +643,43 @@ async def get_visa_idx_status():
     except Exception as e:
         logger.error(f"Error getting integration status: {e}")
         raise HTTPException(status_code=500, detail="Failed to get integration status")
+
+
+@app.get("/api/v1/integration/merchant-search/status")
+async def get_merchant_search_status():
+    """
+    Get Merchant Search integration status and configuration.
+    
+    Returns information about:
+    - Integration availability
+    - Sandbox/production mode
+    - Certificate configuration
+    - Enrichment service status
+    """
+    try:
+        from visa_merchant_search import get_visa_merchant_search_client
+        
+        merchant_client = get_visa_merchant_search_client()
+        
+        return {
+            "integration_enabled": enrichment_service is not None,
+            "sandbox_mode": merchant_client.sandbox,
+            "certificates_configured": (
+                os.path.exists(merchant_client.cert_path) and
+                os.path.exists(merchant_client.key_path)
+            ),
+            "enrichment_endpoints": [
+                "POST /api/v1/merchants/enrich/transaction-search",
+                "POST /api/v1/merchants/enrich/directory-search",
+                "POST /api/v1/merchants/nearby-locations",
+                "GET /api/v1/merchants/merchant-profiles/{purchase_id}",
+                "GET /api/v1/merchants/enrichment-status/{purchase_id}"
+            ]
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting merchant search status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get merchant search status")
 
 
 if __name__ == "__main__":
