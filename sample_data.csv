@@ -1,0 +1,17 @@
+customer_name,email_address,phone_number,city,state,zip_code,purchase_amount,transaction_date
+John Smith,john.smith@example.com,+1-555-0101,New York,NY,10001,25000.00,2026-04-15
+Jane Doe,jane.doe@example.com,+1-555-0102,Los Angeles,CA,90001,35500.50,2026-04-16
+Robert Johnson,robert.j@example.com,+1-555-0103,Chicago,IL,60601,18750.25,2026-04-17
+Maria Garcia,maria.garcia@example.com,+1-555-0104,Houston,TX,77001,42000.00,2026-04-18
+Michael Chen,michael.chen@example.com,+1-555-0105,Phoenix,AZ,85001,22500.75,2026-04-19
+Sarah Williams,sarah.w@example.com,+1-555-0106,Philadelphia,PA,19101,31250.00,2026-04-20
+David Martinez,david.m@example.com,+1-555-0107,San Antonio,TX,78201,28900.50,2026-04-21
+Emily Davis,emily.davis@example.com,+1-555-0108,San Diego,CA,92101,19500.00,2026-04-22
+James Wilson,james.wilson@example.com,+1-555-0109,Dallas,TX,75201,45000.25,2026-04-23
+Lisa Anderson,lisa.anderson@example.com,+1-555-0110,San Jose,CA,95101,33750.75,2026-04-24
+Christopher Taylor,chris.taylor@example.com,+1-555-0111,Austin,TX,78701,26500.00,2026-04-25
+Amanda Brown,amanda.brown@example.com,+1-555-0112,Jacksonville,FL,32099,21000.50,2026-04-26
+Kevin Thompson,kevin.t@example.com,+1-555-0113,Fort Worth,TX,76102,38500.00,2026-04-27
+Nicole Harris,nicole.harris@example.com,+1-555-0114,Columbus,OH,43085,29750.75,2026-04-28
+Daniel White,daniel.white@example.com,+1-555-0115,Charlotte,NC,28202,24000.25,2026-04-29
+
