@@ -9,6 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY visa_idx_client.py .
 COPY visa_idx_sync.py .
+COPY visa_merchant_search.py .
+COPY merchant_enrichment.py .
 
 EXPOSE 8000
 
