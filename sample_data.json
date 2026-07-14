@@ -1,0 +1,85 @@
+{
+  "transactions": [
+    {
+      "customer_name": "Jennifer Lee",
+      "email_address": "jennifer.lee@example.com",
+      "phone_number": "+1-555-0201",
+      "city": "San Francisco",
+      "state": "CA",
+      "zip_code": "94102",
+      "purchase_amount": 55000.00,
+      "transaction_date": "2026-05-01"
+    },
+    {
+      "customer_name": "Mark Johnson",
+      "email_address": "mark.johnson@example.com",
+      "phone_number": "+1-555-0202",
+      "city": "Seattle",
+      "state": "WA",
+      "zip_code": "98101",
+      "purchase_amount": 32500.50,
+      "transaction_date": "2026-05-02"
+    },
+    {
+      "customer_name": "Patricia Nelson",
+      "email_address": "patricia.nelson@example.com",
+      "phone_number": "+1-555-0203",
+      "city": "Boston",
+      "state": "MA",
+      "zip_code": "02101",
+      "purchase_amount": 28750.25,
+      "transaction_date": "2026-05-03"
+    },
+    {
+      "customer_name": "Richard Clark",
+      "email_address": "richard.clark@example.com",
+      "phone_number": "+1-555-0204",
+      "city": "Denver",
+      "state": "CO",
+      "zip_code": "80202",
+      "purchase_amount": 41000.75,
+      "transaction_date": "2026-05-04"
+    },
+    {
+      "customer_name": "Susan Miller",
+      "email_address": "susan.miller@example.com",
+      "phone_number": "+1-555-0205",
+      "city": "Atlanta",
+      "state": "GA",
+      "zip_code": "30303",
+      "purchase_amount": 23500.00,
+      "transaction_date": "2026-05-05"
+    },
+    {
+      "customer_name": "Thomas Moore",
+      "email_address": "thomas.moore@example.com",
+      "phone_number": "+1-555-0206",
+      "city": "Miami",
+      "state": "FL",
+      "zip_code": "33101",
+      "purchase_amount": 37000.50,
+      "transaction_date": "2026-05-06"
+    },
+    {
+      "customer_name": "Victoria Jackson",
+      "email_address": "victoria.jackson@example.com",
+      "phone_number": "+1-555-0207",
+      "city": "Minneapolis",
+      "state": "MN",
+      "zip_code": "55401",
+      "purchase_amount": 19500.25,
+      "transaction_date": "2026-05-07"
+    },
+    {
+      "customer_name": "William Martin",
+      "email_address": "william.martin@example.com",
+      "phone_number": "+1-555-0208",
+      "city": "Portland",
+      "state": "OR",
+      "zip_code": "97201",
+      "purchase_amount": 34250.75,
+      "transaction_date": "2026-05-08"
+    }
+  ]
+}
+
