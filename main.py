@@ -9,6 +9,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 import logging
+import asyncio
+
+from visa_idx_client import get_visa_idx_client
+from visa_idx_sync import get_sync_pipeline
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,6 +28,7 @@ DB_NAME = os.getenv("PGDATABASE", "gold_research")
 
 # Connection pool
 connection_pool = None
+sync_pipeline = None
 
 
 def init_connection_pool():
@@ -71,15 +76,47 @@ def strip_sensitive_data(data: dict) -> dict:
 
 @app.on_event("startup")
 async def startup():
-    """Initialize database on startup."""
+    """Initialize database and Visa IDX sync pipeline on startup."""
+    global sync_pipeline
+    
     init_connection_pool()
     await init_db()
+    
+    # Initialize Visa IDX integration
+    try:
+        # Get sync pipeline
+        db_params = {
+            "host": DB_HOST,
+            "port": DB_PORT,
+            "user": DB_USER,
+            "password": DB_PASSWORD,
+            "database": DB_NAME
+        }
+        sync_pipeline = get_sync_pipeline(db_params)
+        
+        # Initialize sync tracking table
+        conn = get_connection()
+        await sync_pipeline.init_sync_table(conn)
+        return_connection(conn)
+        
+        # Start background sync task
+        asyncio.create_task(sync_pipeline.start_background_sync(interval_seconds=300))
+        
+        logger.info("Visa IDX sync pipeline initialized and background task started")
+    
+    except Exception as e:
+        logger.warning(f"Failed to initialize Visa IDX integration: {e}. Continuing without sync.")
 
 
 @app.on_event("shutdown")
 async def shutdown():
     """Close all connections on shutdown."""
-    global connection_pool
+    global connection_pool, sync_pipeline
+    
+    # Stop sync pipeline
+    if sync_pipeline:
+        await sync_pipeline.stop_background_sync()
+    
     if connection_pool:
         connection_pool.closeall()
 
@@ -256,7 +293,9 @@ async def get_buyers(
 @app.post("/api/v1/research/buyers", response_model=BuyerResponse, status_code=201)
 async def create_buyer(record: BuyerRecord):
     """
-    Ingest a new gold purchase record. Credit card numbers and routing numbers are automatically stripped.
+    Ingest a new gold purchase record. 
+    - Credit card numbers and routing numbers are automatically stripped.
+    - Record is automatically queued for Visa IDX synchronization.
     """
     conn = None
     try:
@@ -285,7 +324,16 @@ async def create_buyer(record: BuyerRecord):
         result = cursor.fetchone()
         conn.commit()
         
-        logger.info(f"Created buyer record with ID {result['id']}")
+        purchase_id = result['id']
+        logger.info(f"Created buyer record with ID {purchase_id}")
+        
+        # Queue for Visa IDX sync (non-blocking)
+        if sync_pipeline:
+            try:
+                await sync_pipeline.queue_purchase_for_sync(purchase_id, conn)
+            except Exception as e:
+                logger.warning(f"Failed to queue record for sync: {e}")
+        
         return dict(result)
     
     except Exception as e:
@@ -297,6 +345,36 @@ async def create_buyer(record: BuyerRecord):
     finally:
         if conn:
             return_connection(conn)
+
+
+@app.get("/api/v1/research/buyers/{buyer_id}/sync-status")
+async def get_buyer_sync_status(buyer_id: int):
+    """
+    Get Visa IDX sync status for a specific buyer record.
+    
+    Returns sync status including:
+    - Current sync state (pending, syncing, success, failed)
+    - Number of sync attempts
+    - Last error (if any)
+    - Visa record ID (if synced)
+    - Compliance flags (data_sanitized, no_pans_detected)
+    """
+    if not sync_pipeline:
+        raise HTTPException(status_code=503, detail="Visa IDX sync pipeline not available")
+    
+    try:
+        status = await sync_pipeline.get_sync_status(buyer_id)
+        
+        if not status:
+            raise HTTPException(status_code=404, detail="Record not found in sync queue")
+        
+        return status
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving sync status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve sync status")
 
 
 @app.get("/api/v1/research/buyers/analytics/total", response_model=dict)
@@ -354,7 +432,41 @@ async def get_total_purchase_amount(
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "visa_idx_integration": "enabled" if sync_pipeline else "disabled"
+    }
+
+
+@app.get("/api/v1/integration/visa-idx/status")
+async def get_visa_idx_status():
+    """
+    Get Visa IDX integration status and configuration.
+    
+    Returns information about:
+    - Integration availability
+    - Sandbox/production mode
+    - Mutual TLS authentication status
+    - Background sync pipeline status
+    """
+    try:
+        visa_client = get_visa_idx_client()
+        
+        return {
+            "integration_enabled": sync_pipeline is not None,
+            "sandbox_mode": visa_client.sandbox,
+            "certificates_configured": (
+                os.path.exists(visa_client.cert_path) and
+                os.path.exists(visa_client.key_path)
+            ),
+            "sync_pipeline_running": sync_pipeline.is_running if sync_pipeline else False,
+            "sync_batch_size": sync_pipeline.BATCH_SIZE if sync_pipeline else None,
+            "max_sync_retries": sync_pipeline.MAX_RETRIES if sync_pipeline else None
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting integration status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get integration status")
 
 
 if __name__ == "__main__":
